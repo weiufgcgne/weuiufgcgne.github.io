@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sync-Presenter Pro Cloud</title>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <style>
+        :root { --bg-color: #000000; --text-color: #ffffff; --accent: #007aff; --glass-bg: rgba(255, 255, 255, 0.05); --glass-border: rgba(255, 255, 255, 0.1); --font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif; }
+        body { margin: 0; background: var(--bg-color); color: var(--text-color); font-family: var(--font-family); height: 100vh; display: flex; justify-content: center; align-items: center; overflow: hidden; }
+        .glass-panel { background: var(--glass-bg); backdrop-filter: blur(30px); border: 1px solid var(--glass-border); border-radius: 28px; padding: 40px; box-shadow: 0 20px 40px rgba(0,0,0,0.4); text-align: center; }
+        .auth-view { width: 380px; display: none; flex-direction: column; }
+        .active { display: flex; animation: fadeIn 0.5s ease; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        input { width: 100%; padding: 14px; margin: 8px 0; background: rgba(255,255,255,0.08); border: 1px solid var(--glass-border); border-radius: 14px; color: white; font-size: 16px; box-sizing: border-box; }
+        button { background: #fff; color: #000; border: none; padding: 14px; border-radius: 14px; font-weight: 600; cursor: pointer; width: 100%; margin-top: 10px; transition: 0.2s; }
+        button:hover { opacity: 0.9; transform: scale(0.98); }
+        button.secondary { background: transparent; color: white; border: 1px solid var(--glass-border); }
+        #app-view { display: none; width: 100%; height: 100%; flex-content: column; padding: 25px; box-sizing: border-box; flex-direction: column; }
+        .workspace { display: flex; gap: 20px; flex: 1; min-height: 0; margin-top: 20px; }
+        .sidebar { width: 320px; display: flex; flex-direction: column; gap: 20px; }
+        .main-stage { flex: 1; position: relative; background: #080808; border-radius: 24px; overflow: hidden; display: flex; align-items: center; justify-content: center; }
+        video { max-width: 100%; max-height: 100%; }
+        .timeline { position: absolute; bottom: 30px; left: 30px; right: 30px; height: 8px; background: rgba(255,255,255,0.15); border-radius: 4px; }
+        .progress-fill { height: 100%; background: #fff; width: 0%; border-radius: 4px; }
+        .marker { position: absolute; top: 0; width: 2px; height: 100%; background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+        .status-dot { width: 10px; height: 10px; background: #34c759; border-radius: 50%; display: inline-block; margin-right: 8px; opacity: 0; transition: opacity 0.3s; }
+    </style>
+</head>
+<body>
+
+    <script>
+        // --- CONFIGURATION ---
+        const SB_URL = 'https://pcuovwubibafsvtmgjhe.supabase.co'; 
+        const SB_KEY = 'sb_publishable_QX082-88Cx0-4Ipg5gXp3g__NUz2bWm';
+        const supabaseClient = supabase.createClient(SB_URL, SB_KEY);
+    </script>
+
+    <div id="view-auth" class="glass-panel auth-view active">
+        <h2>Sync-Presenter</h2>
+        <p style="color: #888; font-size: 14px; margin-bottom: 20px;">Créez un compte ou connectez-vous</p>
+        <input type="email" id="email-field" placeholder="Email">
+        <input type="password" id="pass-field" placeholder="Mot de passe">
+        <button onclick="handleLogin()">Se connecter</button>
+        <button class="secondary" onclick="handleSignUp()">Créer un compte</button>
+    </div>
+
+    <div id="app-view">
+        <div style="display:flex; justify-content: space-between; align-items: center;">
+            <div>
+                <span id="save-indicator" class="status-dot"></span>
+                <h2 style="margin:0; display: inline-block;">Espace de Travail</h2>
+            </div>
+            <button onclick="logout()" class="secondary" style="width:auto; margin:0; padding:10px 20px">Déconnexion</button>
+        </div>
+        <div class="workspace">
+            <div class="sidebar glass-panel">
+                <p>Paliers (ex: 10, 25, 40)</p>
+                <input type="text" id="input-timings" placeholder="0, 15, 30" oninput="handleTimingsChange()">
+                <div style="border: 2px dashed #333; padding: 30px; border-radius: 20px; text-align: center; cursor: pointer;" onclick="document.getElementById('file-input').click()">
+                    <input type="file" id="file-input" accept="video/mp4" style="display:none" onchange="handleFile(this)">
+                    <p id="file-label">Charger une vidéo MP4</p>
+                </div>
+            </div>
+            <div class="main-stage">
+                <video id="main-video"></video>
+                <div class="timeline"><div class="progress-fill" id="fill"></div></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let userEmail = null;
+        let marks = [];
+        let stopPoint = null;
+        const video = document.getElementById('main-video');
+
+        async function handleSignUp() {
+            const email = document.getElementById('email-field').value;
+            const password = document.getElementById('pass-field').value;
+            if (password.length < 6) return alert("Mot de passe : 6 caractères minimum.");
+            
+            const { error } = await supabaseClient.auth.signUp({ email, password });
+            if (error) alert("Erreur : " + error.message);
+            else alert("Inscription réussie ! Vérifiez vos emails pour confirmer votre compte avant de vous connecter.");
+        }
+
+        async function handleLogin() {
+            const email = document.getElementById('email-field').value;
+            const password = document.getElementById('pass-field').value;
+            
+            const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
+            if (error) alert("Échec : " + error.message);
+            else {
+                userEmail = data.user.email;
+                await loadCloudData();
+                showApp();
+            }
+        }
+
+        async function handleTimingsChange() {
+            const val = document.getElementById('input-timings').value;
+            marks = val.split(',').map(t => parseFloat(t.trim())).filter(t => !isNaN(t)).sort((a,b) => a-b);
+            refreshMarkers();
+            
+            if(userEmail) {
+                const { error } = await supabaseClient.from('settings').upsert({ email: userEmail, timings_data: val }, { onConflict: 'email' });
+                if(!error) {
+                    const dot = document.getElementById('save-indicator');
+                    dot.style.opacity = "1";
+                    setTimeout(() => dot.style.opacity = "0", 1000);
+                }
+            }
+        }
+
+        async function loadCloudData() {
+            const { data } = await supabaseClient.from('settings').select('timings_data').eq('email', userEmail).single();
+            if(data) {
+                document.getElementById('input-timings').value = data.timings_data;
+                marks = data.timings_data.split(',').map(t => parseFloat(t.trim())).filter(t => !isNaN(t)).sort((a,b) => a-b);
+                refreshMarkers();
+            }
+        }
+
+        function showApp() {
+            document.getElementById('view-auth').classList.remove('active');
+            document.getElementById('app-view').style.display = 'flex';
+        }
+
+        function handleFile(input) {
+            const file = input.files[0];
+            if(file) { video.src = URL.createObjectURL(file); video.onloadedmetadata = refreshMarkers; }
+        }
+
+        function refreshMarkers() {
+            document.querySelectorAll('.marker').forEach(m => m.remove());
+            marks.forEach(t => {
+                if(video.duration) {
+                    const m = document.createElement('div'); m.className = 'marker';
+                    m.style.left = (t / video.duration * 100) + '%';
+                    document.querySelector('.timeline').appendChild(m);
+                }
+            });
+        }
+
+        function watch() {
+            if(stopPoint !== null && video.currentTime >= stopPoint) {
+                video.pause(); video.currentTime = stopPoint; stopPoint = null;
+            } else { requestAnimationFrame(watch); }
+        }
+
+        window.onkeydown = (e) => {
+            if(e.target.tagName === 'INPUT') return;
+            if(e.code === 'Space' || e.code === 'ArrowRight') {
+                e.preventDefault();
+                const next = marks.find(t => t > video.currentTime + 0.1);
+                stopPoint = (next !== undefined) ? next : video.duration;
+                video.play(); watch();
+            }
+            if(e.code === 'ArrowLeft') {
+                e.preventDefault();
+                const prev = [...marks].reverse().find(t => t < video.currentTime - 0.2);
+                video.currentTime = prev || 0; video.pause(); stopPoint = null;
+            }
+        };
+
+        video.ontimeupdate = () => { document.getElementById('fill').style.width = (video.currentTime / video.duration * 100) + '%'; };
+        function logout() { supabaseClient.auth.signOut(); location.reload(); }
+    </script>
+</body>
+</html>
