@@ -16,11 +16,11 @@
         button { background: #fff; color: #000; border: none; padding: 14px; border-radius: 14px; font-weight: 600; cursor: pointer; width: 100%; margin-top: 10px; transition: 0.2s; }
         button:hover { opacity: 0.9; transform: scale(0.98); }
         button.secondary { background: transparent; color: white; border: 1px solid var(--glass-border); }
-        #app-view { display: none; width: 100%; height: 100%; flex-content: column; padding: 25px; box-sizing: border-box; flex-direction: column; }
+        #app-view { display: none; width: 100%; height: 100%; flex-direction: column; padding: 25px; box-sizing: border-box; }
         .workspace { display: flex; gap: 20px; flex: 1; min-height: 0; margin-top: 20px; }
         .sidebar { width: 320px; display: flex; flex-direction: column; gap: 20px; }
         .main-stage { flex: 1; position: relative; background: #080808; border-radius: 24px; overflow: hidden; display: flex; align-items: center; justify-content: center; }
-        video { max-width: 100%; max-height: 100%; }
+        video { max-width: 100%; max-height: 100%; outline: none; }
         .timeline { position: absolute; bottom: 30px; left: 30px; right: 30px; height: 8px; background: rgba(255,255,255,0.15); border-radius: 4px; }
         .progress-fill { height: 100%; background: #fff; width: 0%; border-radius: 4px; }
         .marker { position: absolute; top: 0; width: 2px; height: 100%; background: var(--accent); box-shadow: 0 0 8px var(--accent); }
@@ -30,15 +30,14 @@
 <body>
 
     <script>
-        // --- CONFIGURATION ---
-        const SB_URL = 'https://pcuovwubibafsvtmgjhe.supabase.co'; 
-        const SB_KEY = 'sb_publishable_QX082-88Cx0-4Ipg5gXp3g__NUz2bWm';
+        // --- CONFIGURATION À REMPLACER ---
+        const SB_URL = 'VOTRE_URL_SUPABASE'; 
+        const SB_KEY = 'VOTRE_CLE_ANON';
         const supabaseClient = supabase.createClient(SB_URL, SB_KEY);
     </script>
 
     <div id="view-auth" class="glass-panel auth-view active">
         <h2>Sync-Presenter</h2>
-        <p style="color: #888; font-size: 14px; margin-bottom: 20px;">Créez un compte ou connectez-vous</p>
         <input type="email" id="email-field" placeholder="Email">
         <input type="password" id="pass-field" placeholder="Mot de passe">
         <button onclick="handleLogin()">Se connecter</button>
@@ -57,10 +56,11 @@
             <div class="sidebar glass-panel">
                 <p>Paliers (ex: 10, 25, 40)</p>
                 <input type="text" id="input-timings" placeholder="0, 15, 30" oninput="handleTimingsChange()">
-                <div style="border: 2px dashed #333; padding: 30px; border-radius: 20px; text-align: center; cursor: pointer;" onclick="document.getElementById('file-input').click()">
-                    <input type="file" id="file-input" accept="video/mp4" style="display:none" onchange="handleFile(this)">
-                    <p id="file-label">Charger une vidéo MP4</p>
+                
+                <div style="border: 2px solid var(--accent); padding: 20px; border-radius: 20px; text-align: center; cursor: pointer; background: rgba(0, 122, 255, 0.1);" onclick="loadVideoFromUrl()">
+                    <p style="margin: 0; font-weight: 600;">🔗 Utiliser une vidéo Drive</p>
                 </div>
+                <p style="font-size: 11px; color: #666;">Pensez à mettre le lien Drive en "Public"</p>
             </div>
             <div class="main-stage">
                 <video id="main-video"></video>
@@ -75,20 +75,18 @@
         let stopPoint = null;
         const video = document.getElementById('main-video');
 
+        // --- AUTHENTIFICATION ---
         async function handleSignUp() {
             const email = document.getElementById('email-field').value;
             const password = document.getElementById('pass-field').value;
-            if (password.length < 6) return alert("Mot de passe : 6 caractères minimum.");
-            
             const { error } = await supabaseClient.auth.signUp({ email, password });
-            if (error) alert("Erreur : " + error.message);
-            else alert("Inscription réussie ! Vérifiez vos emails pour confirmer votre compte avant de vous connecter.");
+            if (error) alert(error.message);
+            else alert("Vérifiez vos emails pour confirmer l'inscription !");
         }
 
         async function handleLogin() {
             const email = document.getElementById('email-field').value;
             const password = document.getElementById('pass-field').value;
-            
             const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
             if (error) alert("Échec : " + error.message);
             else {
@@ -98,38 +96,65 @@
             }
         }
 
+        // --- GESTION VIDÉO DRIVE ---
+        function getDirectDriveUrl(shareUrl) {
+            const fileId = shareUrl.match(/[-\w]{25,}/);
+            return fileId ? `https://drive.google.com/uc?export=download&id=${fileId[0]}` : shareUrl;
+        }
+
+        async function loadVideoFromUrl(urlFromCloud = null) {
+            let url = urlFromCloud;
+            if (!url) {
+                url = prompt("Collez le lien de partage Google Drive :");
+            }
+            if (url) {
+                video.src = getDirectDriveUrl(url);
+                video.load();
+                if (!urlFromCloud) saveToCloud(); // Sauvegarde seulement si c'est un nouvel URL
+            }
+        }
+
+        // --- CLOUD SYNC ---
+        async function saveToCloud() {
+            if (!userEmail) return;
+            const timings = document.getElementById('input-timings').value;
+            const currentUrl = video.src.includes('drive.google.com') ? video.src : ""; 
+            
+            const { error } = await supabaseClient.from('settings').upsert({ 
+                email: userEmail, 
+                timings_data: timings,
+                video_url: document.getElementById('video-temp-url')?.value || "" 
+            }, { onConflict: 'email' });
+
+            if(!error) {
+                const dot = document.getElementById('save-indicator');
+                dot.style.opacity = "1";
+                setTimeout(() => dot.style.opacity = "0", 1000);
+            }
+        }
+
+        // Cette fonction spécifique s'assure de sauvegarder le lien Drive original
         async function handleTimingsChange() {
             const val = document.getElementById('input-timings').value;
             marks = val.split(',').map(t => parseFloat(t.trim())).filter(t => !isNaN(t)).sort((a,b) => a-b);
             refreshMarkers();
-            
-            if(userEmail) {
-                const { error } = await supabaseClient.from('settings').upsert({ email: userEmail, timings_data: val }, { onConflict: 'email' });
-                if(!error) {
-                    const dot = document.getElementById('save-indicator');
-                    dot.style.opacity = "1";
-                    setTimeout(() => dot.style.opacity = "0", 1000);
-                }
-            }
+            saveToCloud();
         }
 
         async function loadCloudData() {
-            const { data } = await supabaseClient.from('settings').select('timings_data').eq('email', userEmail).single();
+            const { data } = await supabaseClient.from('settings').select('*').eq('email', userEmail).single();
             if(data) {
-                document.getElementById('input-timings').value = data.timings_data;
-                marks = data.timings_data.split(',').map(t => parseFloat(t.trim())).filter(t => !isNaN(t)).sort((a,b) => a-b);
+                document.getElementById('input-timings').value = data.timings_data || "";
+                marks = (data.timings_data || "").split(',').map(t => parseFloat(t.trim())).filter(t => !isNaN(t));
+                if (data.video_url) loadVideoFromUrl(data.video_url);
                 refreshMarkers();
             }
         }
 
+        // --- LOGIQUE INTERFACE ---
         function showApp() {
             document.getElementById('view-auth').classList.remove('active');
             document.getElementById('app-view').style.display = 'flex';
-        }
-
-        function handleFile(input) {
-            const file = input.files[0];
-            if(file) { video.src = URL.createObjectURL(file); video.onloadedmetadata = refreshMarkers; }
         }
 
         function refreshMarkers() {
